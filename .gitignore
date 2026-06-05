@@ -5,3 +5,5 @@ frd_alerts_*.txt
 scanner_run_output.txt
 scanner_run_error.txt
 stdin_blank.txt
+trash_bt_output.txt
+trash_bt_error.txt
