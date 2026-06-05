@@ -1,0 +1,7 @@
+__pycache__/
+poly_cache/
+frd_alerts_*.txt
+.email_creds.json
+scanner_run_output.txt
+scanner_run_error.txt
+stdin_blank.txt
