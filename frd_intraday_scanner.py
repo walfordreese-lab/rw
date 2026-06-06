@@ -552,7 +552,7 @@ def format_alert(ticker: str, details: dict, meta: dict | None = None) -> str:
     pct_off  = details["pct_off_hod"]
     pct_day  = details["pct_vs_prev"]
     ts       = (meta or {}).get("trash_score", 0)
-    warn     = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    warn     = " PRIME" if ts >= TRASH_SCORE_THRESHOLD else ""
     return (
         f"[{now_str}] STRAT-G SHORT: {ticker}"
         f"  Entry zone: ${entry:.2f}"
@@ -700,7 +700,7 @@ def notify(ticker: str, details: dict, trash_score: int = 0) -> None:
     """
     entry = details["current"]
     stop  = round(entry * (1.0 + STOP_PCT), 2)
-    warn  = " ⚠️" if trash_score >= TRASH_SCORE_THRESHOLD else ""
+    warn  = " PRIME" if trash_score >= TRASH_SCORE_THRESHOLD else ""
     title = f"STRAT-G SHORT: {ticker}  |  Trash {trash_score}/10{warn}"
     line2 = f"Entry zone: ${entry:.2f}   Stop: ${stop:.2f} (+{STOP_PCT:.0%})"
     line3 = (
@@ -775,7 +775,7 @@ def print_scan_table(
             status = f"watching  ({det['pct_vs_prev']:+.1%} vs prev)"
 
         ts   = meta.get("trash_score", 0)
-        warn = "⚠️" if ts >= TRASH_SCORE_THRESHOLD else "  "
+        warn = "PRIME" if ts >= TRASH_SCORE_THRESHOLD else "     "
         print(
             f"  {ticker:<7}  "
             f"${det['prev_close']:>6.2f}  "
@@ -783,7 +783,7 @@ def print_scan_table(
             f"${det['hod']:>6.2f}  "
             f"{det['pct_vs_prev']:>+7.1%}  "
             f"{det['pct_off_hod']:>6.1%}  "
-            f"  {ts:>2}/10{warn}  "
+            f"  {ts:>2}/10 {warn}  "
             f"{t1_str:>5}  "
             f"{t2_str:>5}  "
             f"{status}"
@@ -924,7 +924,7 @@ def send_email_alert(
     stop        = round(entry * (1.0 + STOP_PCT), 2)
     now         = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
     trash_score = meta.get("trash_score", 0)
-    warn        = " ⚠️" if trash_score >= TRASH_SCORE_THRESHOLD else ""
+    warn        = " PRIME" if trash_score >= TRASH_SCORE_THRESHOLD else ""
 
     subject = f"STRAT-G SHORT: {ticker}  |  Trash {trash_score}/10{warn}"
 
@@ -1026,7 +1026,7 @@ def format_tier_alert(
     stop        = round(entry_price * (1.0 + STOP_PCT), 2)
     now_str     = datetime.now(ET).strftime("%H:%M ET")
     ts          = meta.get("trash_score", 0)
-    warn        = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    warn        = " PRIME" if ts >= TRASH_SCORE_THRESHOLD else ""
     pct_off_hod = (hod_ref - entry_price) / hod_ref if hod_ref else 0.0
     prev_c      = snap_details.get("prev_close") or meta.get("prev_close", 0.0)
     pct_vs_prev = (entry_price - prev_c) / prev_c if prev_c else 0.0
@@ -1052,7 +1052,7 @@ def notify_tier(
     """Toast notification for Tier 1 or Tier 2 alerts."""
     stop        = round(entry_price * (1.0 + STOP_PCT), 2)
     ts          = meta.get("trash_score", 0)
-    warn        = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    warn        = " PRIME" if ts >= TRASH_SCORE_THRESHOLD else ""
     prefix      = TIER1_SUBJECT_PREFIX if tier == 1 else TIER2_SUBJECT_PREFIX
     pct_off_hod = (hod_ref - entry_price) / hod_ref if hod_ref else 0.0
     title       = f"{prefix} {ticker} | Trash {ts}/10{warn}"
@@ -1087,7 +1087,7 @@ def send_tier_email(
     stop        = round(entry_price * (1.0 + STOP_PCT), 2)
     now         = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
     ts          = meta.get("trash_score", 0)
-    warn        = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    warn        = " PRIME" if ts >= TRASH_SCORE_THRESHOLD else ""
     prefix      = TIER1_SUBJECT_PREFIX if tier == 1 else TIER2_SUBJECT_PREFIX
     label       = "HOD-FADE"   if tier == 1 else "PUSH-FAIL"
     desc        = (
@@ -1239,7 +1239,7 @@ def main():
         print("  " + "-" * 68)
         for tkr, m in sorted(universe.items()):
             ts   = m.get("trash_score", 0)
-            warn = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+            warn = " PRIME" if ts >= TRASH_SCORE_THRESHOLD else ""
             print(
                 f"  {tkr:<7}  "
                 f"${m['prev_close']:>8.2f}  "
