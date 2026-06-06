@@ -2,26 +2,30 @@
 """
 frd_intraday_scanner.py
 =======================
-First Red Day (FRD) Intraday Short Scanner — Polygon.io
+Strategy G — "Failed Bounce Reversal Short" — Intraday Scanner — Polygon.io
+
+Derived from a 150K-combination grid search over 6 months of Polygon data.
+Backtest: n=12, WR=75%, Exp=+8.0% per trade (Dec 2025 – Jun 2026).
 
 Startup
 -------
 1. Pull the last LOOKBACK_DAYS of grouped daily bars to find stocks currently
-   in an active pump meeting all universe criteria:
-     - Price $3-$10
-     - 3-day gain >= 100%
-     - Average volume >= 1M during the run
-     - Streak <= 4 consecutive green days
-     - Vol ratio on most recent day: < 0.10  OR  >= 0.50
+   in an active pump meeting all Strategy G universe criteria:
+     - Price $2-$25
+     - 3-day gain >= 75%
+     - 20-day average volume >= 300K
+     - Streak <= 1 consecutive green close before today
+     - Vol ratio on most recent day >= 0.30
 
 Real-time loop  (every 5 minutes, 9:30 AM – 4:00 PM ET)
 ---------------------------------------------------------
 2. Fetch Polygon snapshot for every universe ticker (one API call per batch).
-3. Alert when a ticker meets both intraday FRD conditions:
-     a. Current price < yesterday's close  (first red day)
-     b. Current price < today's HOD * (1 - 0.03)  (fading >= 3% from high)
-4. Print a live status table every poll.
-5. Log all alerts to frd_alerts_YYYY-MM-DD.txt.
+3. Alert when a ticker meets Strategy G intraday signal conditions:
+     a. Current price <= prev close * (1 - 0.10)  (down >= 10% on day)
+     b. Current price <= today's HOD * (1 - 0.12)  (fading >= 12% from high)
+4. ALL Strategy G signals fire popup + email — high-conviction setup.
+5. Print a live status table every poll.
+6. Log all alerts to frd_alerts_YYYY-MM-DD.txt.
 
 Usage
 -----
@@ -82,6 +86,27 @@ MARKET_CLOSE   = dt_time(16, 0)
 
 SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
 CREDS_FILE     = os.path.join(SCRIPT_DIR, ".email_creds.json")
+
+# ── Tier definitions ───────────────────────────────────────────────────────────
+# Tier 1: Strategy G + HOD Fade Entry
+#   HOD establishes in the first 90 min (9:30–11:00), then first red 5-min
+#   candle after 11:00 AM triggers the short entry.
+# Tier 2: Strategy G + Failed Morning Push
+#   No new high is made after 10:00 AM (price can't exceed HOD-at-10am),
+#   then the first 5-min candle to close below the 10:00 AM candle's close.
+
+HOD_WINDOW_END  = dt_time(11, 0)   # HOD frozen after this time (Tier 1)
+TEN_AM          = dt_time(10, 0)   # reference time for Tier 2
+
+TIER1_SUBJECT_PREFIX = "[T1-HOD-FADE]"
+TIER2_SUBJECT_PREFIX = "[T2-PUSH-FAIL]"
+
+CSV_COLUMNS = [
+    "timestamp", "tier", "ticker",
+    "entry_price", "stop_price",
+    "hod_ref", "pct_off_hod", "pct_vs_prev",
+    "roll3_gain", "vol_ratio", "trash_score",
+]
 
 # Global flag so Ctrl+C triggers a clean exit
 _RUNNING = True
@@ -436,6 +461,90 @@ def check_frd(ticker: str, snap: dict, meta: dict) -> tuple:
     return gone_red and fading_hod, details
 
 
+# ── 5-min bar helpers for tier checks ─────────────────────────────────────────
+
+def get_5m_bars(ticker: str, day: date) -> list[dict]:
+    """
+    Fetch today's completed 5-min bars from Polygon for a single ticker.
+    Returns a list of dicts sorted ascending: {ts, o, h, l, c, v}.
+    """
+    ds   = day.isoformat()
+    body = _get(
+        f"/v2/aggs/ticker/{ticker}/range/5/minute/{ds}/{ds}",
+        {"adjusted": "true", "limit": 200, "sort": "asc"},
+    )
+    bars = []
+    for b in body.get("results", []):
+        ts = datetime.fromtimestamp(b["t"] / 1000, tz=ET)
+        bars.append({
+            "ts": ts,
+            "o": float(b["o"]),
+            "h": float(b["h"]),
+            "l": float(b["l"]),
+            "c": float(b["c"]),
+            "v": float(b.get("v", 0)),
+        })
+    return bars
+
+
+def check_tier1_hod_fade(bars_5m: list, state: dict) -> tuple[bool, float | None]:
+    """
+    Tier 1 — HOD Fade Entry.
+
+    HOD is the highest high in bars between 9:30 and 11:00 AM.
+    After 11:00 AM, watch for the FIRST 5-min candle where close < open (red).
+    If any bar after 11:00 AM exceeds the morning HOD the setup is invalidated.
+
+    Returns (triggered, entry_price).
+    """
+    hod = state.get("hod_at_11am")
+    if hod is None or not bars_5m:
+        return False, None
+
+    after_11 = [b for b in bars_5m if b["ts"].time() > HOD_WINDOW_END]
+    if not after_11:
+        return False, None
+
+    for bar in after_11:
+        if bar["h"] > hod:
+            # Price exceeded the morning HOD — pattern invalidated for this ticker.
+            state["tier1_invalidated"] = True
+            return False, None
+        if bar["c"] < bar["o"]:
+            return True, bar["c"]
+
+    return False, None
+
+
+def check_tier2_failed_push(bars_5m: list, state: dict) -> tuple[bool, float | None]:
+    """
+    Tier 2 — Failed Morning Push.
+
+    Reference: HOD at or before 10:00 AM, and the 10:00 AM candle's close.
+    After 10:00 AM:
+      - If any bar's high exceeds hod_at_10am → new high made, pattern invalid.
+      - First bar to close below ten_am_close → entry.
+
+    Returns (triggered, entry_price).
+    """
+    hod_10  = state.get("hod_at_10am")
+    ten_cls = state.get("ten_am_close")
+    if hod_10 is None or ten_cls is None or not bars_5m:
+        return False, None
+
+    after_10 = [b for b in bars_5m if b["ts"].time() > TEN_AM]
+    if not after_10:
+        return False, None
+
+    for bar in after_10:
+        if bar["h"] > hod_10:
+            return False, None          # new high after 10am — no failure
+        if bar["c"] < ten_cls:
+            return True, bar["c"]
+
+    return False, None
+
+
 def format_alert(ticker: str, details: dict, meta: dict | None = None) -> str:
     entry    = details["current"]
     stop     = round(entry * (1.0 + STOP_PCT), 2)
@@ -458,6 +567,45 @@ def format_alert(ticker: str, details: dict, meta: dict | None = None) -> str:
 def log_alert(text: str, path: str) -> None:
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(text + "\n")
+
+
+def log_alert_csv(
+    csv_path: str,
+    tier: int,
+    ticker: str,
+    entry_price: float,
+    hod_ref: float,
+    meta: dict,
+    snap_details: dict,
+) -> None:
+    """
+    Append one row to the daily CSV alert log.
+    Creates the file with a header if it does not yet exist.
+    """
+    import csv
+    stop_price   = round(entry_price * (1.0 + STOP_PCT), 4)
+    pct_off_hod  = (hod_ref - entry_price) / hod_ref if hod_ref else 0.0
+    prev_c       = snap_details.get("prev_close") or meta.get("prev_close", 0.0)
+    pct_vs_prev  = (entry_price - prev_c) / prev_c if prev_c else 0.0
+    row = {
+        "timestamp":   datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S"),
+        "tier":        tier,
+        "ticker":      ticker,
+        "entry_price": round(entry_price, 4),
+        "stop_price":  stop_price,
+        "hod_ref":     round(hod_ref, 4),
+        "pct_off_hod": round(pct_off_hod, 4),
+        "pct_vs_prev": round(pct_vs_prev, 4),
+        "roll3_gain":  round(meta.get("roll3_gain", 0.0), 4),
+        "vol_ratio":   round(meta.get("vol_ratio",  0.0), 4),
+        "trash_score": meta.get("trash_score", 0),
+    }
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def _xml_escape(s: str) -> str:
@@ -495,11 +643,11 @@ def _winrt_toast(title: str, line2: str, line3: str) -> bool:
     xml_b64 = base64.b64encode(xml.encode("utf-16-le")).decode("ascii")
 
     ps = f"""\
-$APPID = "FRD.Scanner"
+$APPID = "StratG.Scanner"
 $reg = "HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\$APPID"
 if (!(Test-Path $reg)) {{
     New-Item -Path $reg -Force | Out-Null
-    New-ItemProperty -Path $reg -Name "DisplayName" -Value "FRD Scanner" -Force | Out-Null
+    New-ItemProperty -Path $reg -Name "DisplayName" -Value "Strategy G Scanner" -Force | Out-Null
 }}
 [Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null
 [Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]|Out-Null
@@ -570,7 +718,7 @@ def notify(ticker: str, details: dict, trash_score: int = 0) -> None:
             _plyer_notification.notify(
                 title=title,
                 message=f"{line2}\n{line3}",
-                app_name="FRD Scanner",
+                app_name="Strategy G Scanner",
                 timeout=10,
             )
         except Exception:
@@ -579,38 +727,52 @@ def notify(ticker: str, details: dict, trash_score: int = 0) -> None:
 
 # ── Display ────────────────────────────────────────────────────────────────────
 
-def print_scan_table(universe: dict, snapshots: dict, alerted: set) -> None:
-    now_str = datetime.now(ET).strftime("%H:%M:%S ET")
-    w = 88
+def print_scan_table(
+    universe: dict,
+    snapshots: dict,
+    alerted: set,
+    ticker_states: dict,
+) -> None:
+    now_str  = datetime.now(ET).strftime("%H:%M:%S ET")
+    now_time = datetime.now(ET).time()
+    w = 100
     print(f"\n{'='*w}")
     print(f"  [{now_str}]  Watching {len(universe)} stocks  "
           f"| next poll in {POLL_SECS//60} min  | Ctrl+C to stop")
     print(f"{'='*w}")
     print(f"  {'Ticker':<7}  {'PrevC':>7}  {'Curr':>7}  {'HOD':>7}  "
-          f"{'vs.Prev':>8}  {'offHOD':>7}  {'Trash':>7}  Status")
+          f"{'vs.Prev':>8}  {'offHOD':>7}  {'Trash':>6}  {'T1':>5}  {'T2':>6}  Status")
     print(f"  {'-'*(w-2)}")
 
     for ticker in sorted(universe):
-        meta = universe[ticker]
-        snap = snapshots.get(ticker, {})
+        meta  = universe[ticker]
+        snap  = snapshots.get(ticker, {})
+        state = ticker_states.get(ticker, {})
         triggered, det = check_frd(ticker, snap, meta)
 
         if not det:
             print(f"  {ticker:<7}  (no data yet)")
             continue
 
+        # Tier status columns
+        t1_fired = state.get("tier1_alerted", False)
+        t2_fired = state.get("tier2_alerted", False)
+        t1_inv   = state.get("tier1_invalidated", False)
+        t1_str   = "FIRED" if t1_fired else ("INV" if t1_inv else
+                   ("wait" if now_time >= HOD_WINDOW_END else "early"))
+        t2_str   = "FIRED" if t2_fired else (
+                   "wait" if now_time >= TEN_AM else "early")
+
         if ticker in alerted:
-            status = "ALERTED"
+            status = "FRD-ALERTED"
         elif triggered:
-            status = "** STRAT-G SIGNAL **"
+            status = "** STRAT-G FRD SIGNAL **"
         elif det["gone_red"] and not det["fading_hod"]:
             status = f"down>=10%  ({det['pct_off_hod']:.1%} off HOD, need >=12%)"
         elif det["fading_hod"] and not det["gone_red"]:
             status = f"HOD-fade OK  ({det['pct_vs_prev']:+.1%} vs prev, need <=-10%)"
-        elif not det["gone_red"] and not det["fading_hod"]:
-            status = f"watching  ({det['pct_vs_prev']:+.1%} vs prev)"
         else:
-            status = "watching"
+            status = f"watching  ({det['pct_vs_prev']:+.1%} vs prev)"
 
         ts   = meta.get("trash_score", 0)
         warn = "⚠️" if ts >= TRASH_SCORE_THRESHOLD else "  "
@@ -622,6 +784,8 @@ def print_scan_table(universe: dict, snapshots: dict, alerted: set) -> None:
             f"{det['pct_vs_prev']:>+7.1%}  "
             f"{det['pct_off_hod']:>6.1%}  "
             f"  {ts:>2}/10{warn}  "
+            f"{t1_str:>5}  "
+            f"{t2_str:>5}  "
             f"{status}"
         )
     print()
@@ -685,7 +849,7 @@ def print_email_setup_instructions() -> None:
     line()
     line("  1. Go to  myaccount.google.com/apppasswords")
     line("  2. Sign in and choose 'Create app password'")
-    line("  3. Name it anything (e.g. 'FRD Scanner')")
+    line("  3. Name it anything (e.g. 'Strategy G Scanner')")
     line("  4. Copy the 16-character code Google shows you")
     line("  5. Paste it below (spaces are stripped automatically)")
     line()
@@ -783,8 +947,9 @@ def send_email_alert(
         f"Run avg vol:    {meta['run_avg_vol']/1e6:.1f}M shares/day\n"
         f"Trash score:    {trash_score}/10{warn}\n"
         f"{'='*40}\n"
-        f"Trade plan: Short at open tomorrow if price stays below ${details['prev_close']:.2f}.\n"
-        f"Hard stop {STOP_PCT:.0%} above entry = ${stop:.2f}.  Exit at EOD close.\n"
+        f"Trade plan: Short at tomorrow's open if price stays below ${details['prev_close']:.2f}.\n"
+        f"Hard stop {STOP_PCT:.0%} above entry = ${stop:.2f}.\n"
+        f"Exit: if D+2 opens below entry, cover at that open; else cover at D+1 EOD.\n"
         f"Strategy G — streak<={MAX_STREAK}, HOD>={HOD_FADE_PCT:.0%}, down>={MIN_DOWN_PCT:.0%}\n"
     )
 
@@ -821,9 +986,10 @@ def send_email_alert(
   {row("Run avg vol", f"{meta['run_avg_vol']/1e6:.1f}M shares/day")}
 </table>
 <p style='margin-top:16px;color:#444'>
-  <b>Trade plan:</b> Short at open if price stays below
+  <b>Trade plan:</b> Short at tomorrow's open if price stays below
   ${details['prev_close']:.2f}.&nbsp; Hard stop {STOP_PCT:.0%} above entry
-  = ${stop:.2f}.&nbsp; Exit at EOD close.<br>
+  = ${stop:.2f}.<br>
+  <b>Exit:</b> if D+2 opens below entry, cover at that open; else cover at D+1 EOD.<br>
   <span style='color:#888;font-size:12px'>Strategy G: streak&le;{MAX_STREAK}, HOD&ge;{HOD_FADE_PCT:.0%}, down&ge;{MIN_DOWN_PCT:.0%}</span>
 </p>
 </body></html>"""
@@ -847,12 +1013,175 @@ def send_email_alert(
         log_alert(err, log_path)
 
 
+# ── Tier alert helpers ────────────────────────────────────────────────────────
+
+def format_tier_alert(
+    tier: int,
+    ticker: str,
+    entry_price: float,
+    hod_ref: float,
+    meta: dict,
+    snap_details: dict,
+) -> str:
+    stop        = round(entry_price * (1.0 + STOP_PCT), 2)
+    now_str     = datetime.now(ET).strftime("%H:%M ET")
+    ts          = meta.get("trash_score", 0)
+    warn        = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    pct_off_hod = (hod_ref - entry_price) / hod_ref if hod_ref else 0.0
+    prev_c      = snap_details.get("prev_close") or meta.get("prev_close", 0.0)
+    pct_vs_prev = (entry_price - prev_c) / prev_c if prev_c else 0.0
+    prefix      = TIER1_SUBJECT_PREFIX if tier == 1 else TIER2_SUBJECT_PREFIX
+    label       = ("HOD-FADE"   if tier == 1 else "PUSH-FAIL")
+    return (
+        f"[{now_str}] {prefix} {label} SHORT: {ticker}"
+        f"  Entry: ${entry_price:.2f}"
+        f"  Stop: ${stop:.2f} (+{STOP_PCT:.0%})"
+        f"  | HOD-ref ${hod_ref:.2f}"
+        f"  ({pct_off_hod:.1%} off high, {pct_vs_prev:+.1%} vs prev)"
+        f"  | Trash: {ts}/10{warn}"
+    )
+
+
+def notify_tier(
+    tier: int,
+    ticker: str,
+    entry_price: float,
+    hod_ref: float,
+    meta: dict,
+) -> None:
+    """Toast notification for Tier 1 or Tier 2 alerts."""
+    stop        = round(entry_price * (1.0 + STOP_PCT), 2)
+    ts          = meta.get("trash_score", 0)
+    warn        = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    prefix      = TIER1_SUBJECT_PREFIX if tier == 1 else TIER2_SUBJECT_PREFIX
+    pct_off_hod = (hod_ref - entry_price) / hod_ref if hod_ref else 0.0
+    title       = f"{prefix} {ticker} | Trash {ts}/10{warn}"
+    line2       = f"Entry: ${entry_price:.2f}   Stop: ${stop:.2f} (+{STOP_PCT:.0%})"
+    line3       = f"HOD-ref ${hod_ref:.2f}  ({pct_off_hod:.1%} off high)"
+
+    if _winrt_toast(title, line2, line3):
+        return
+    if _NOTIFY_AVAILABLE:
+        try:
+            _plyer_notification.notify(
+                title=title,
+                message=f"{line2}\n{line3}",
+                app_name="Strategy G Scanner",
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+
+def send_tier_email(
+    tier: int,
+    ticker: str,
+    entry_price: float,
+    hod_ref: float,
+    meta: dict,
+    snap_details: dict,
+    email_cfg: dict,
+    log_path: str,
+) -> None:
+    """Send a tier-specific alert email via Gmail SMTP."""
+    stop        = round(entry_price * (1.0 + STOP_PCT), 2)
+    now         = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
+    ts          = meta.get("trash_score", 0)
+    warn        = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
+    prefix      = TIER1_SUBJECT_PREFIX if tier == 1 else TIER2_SUBJECT_PREFIX
+    label       = "HOD-FADE"   if tier == 1 else "PUSH-FAIL"
+    desc        = (
+        "HOD established in first 90 min; first red 5-min candle after 11:00 AM"
+        if tier == 1 else
+        "No new high after 10:00 AM; price closed below the 10:00 AM candle"
+    )
+    pct_off_hod = (hod_ref - entry_price) / hod_ref if hod_ref else 0.0
+    prev_c      = snap_details.get("prev_close") or meta.get("prev_close", 0.0)
+    pct_vs_prev = (entry_price - prev_c) / prev_c if prev_c else 0.0
+
+    subject = f"{prefix} SHORT: {ticker}  |  Trash {ts}/10{warn}"
+
+    plain = (
+        f"TIER {tier} — {label} SHORT SIGNAL: {ticker}\n"
+        f"{'='*45}\n"
+        f"Time:           {now}\n"
+        f"Setup:          {desc}\n"
+        f"Entry zone:     ${entry_price:.2f}\n"
+        f"Stop:           ${stop:.2f}  (+{STOP_PCT:.0%} above entry)\n"
+        f"{'-'*45}\n"
+        f"HOD reference:  ${hod_ref:.2f}\n"
+        f"% off HOD-ref:  {pct_off_hod:.1%}\n"
+        f"Prev close:     ${prev_c:.2f}\n"
+        f"% vs prev:      {pct_vs_prev:+.1%}\n"
+        f"{'-'*45}\n"
+        f"3-day gain:     {meta.get('roll3_gain', 0):.0%}\n"
+        f"Vol ratio:      {meta.get('vol_ratio', 0):.2f}\n"
+        f"Run avg vol:    {meta.get('run_avg_vol', 0)/1e6:.1f}M shares/day\n"
+        f"Trash score:    {ts}/10{warn}\n"
+        f"{'='*45}\n"
+    )
+
+    def row(label_: str, value_: str, bold: bool = False) -> str:
+        v = f"<b>{value_}</b>" if bold else value_
+        return (
+            f"<tr><td style='padding:4px 12px 4px 4px;color:#555'>{label_}</td>"
+            f"<td style='padding:4px'>{v}</td></tr>"
+        )
+
+    tier_color  = "#1a6ea8" if tier == 1 else "#8e44ad"
+    trash_color = "#c0392b" if ts >= TRASH_SCORE_THRESHOLD else "#444"
+    html = f"""<html><body style='font-family:monospace;font-size:14px'>
+<h2 style='color:{tier_color};margin-bottom:4px'>{prefix} SHORT: {ticker}</h2>
+<p style='color:#888;margin-top:0;font-size:12px'>{desc}</p>
+<p style='color:#666;margin-top:0'>{now}</p>
+<table style='border-collapse:collapse;margin-bottom:16px'>
+  {row("Ticker", ticker, bold=True)}
+  {row("Entry zone", f"${entry_price:.2f}", bold=True)}
+  {row("Stop price", f"${stop:.2f}  (+{STOP_PCT:.0%})", bold=True)}
+  <tr><td style='padding:4px 12px 4px 4px;color:#555'>Trash score</td>
+      <td style='padding:4px;color:{trash_color}'><b>{ts}/10{warn}</b></td></tr>
+</table>
+<table style='border-collapse:collapse;border-top:1px solid #ddd;padding-top:8px;margin-bottom:16px'>
+  {row("HOD reference", f"${hod_ref:.2f}")}
+  {row("% off HOD-ref", f"{pct_off_hod:.1%}")}
+  {row("Prev close", f"${prev_c:.2f}")}
+  {row("% vs prev close", f"{pct_vs_prev:+.1%}")}
+</table>
+<table style='border-collapse:collapse;border-top:1px solid #ddd;padding-top:8px'>
+  {row("3-day gain", f"{meta.get('roll3_gain', 0):.0%}")}
+  {row("Vol ratio", f"{meta.get('vol_ratio', 0):.2f}")}
+  {row("Run avg vol", f"{meta.get('run_avg_vol', 0)/1e6:.1f}M shares/day")}
+</table>
+<p style='margin-top:16px;color:#444'>
+  <b>Tier {tier} — {label}.</b> {desc}.<br>
+  Hard stop {STOP_PCT:.0%} above entry = ${stop:.2f}.
+</p>
+</body></html>"""
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = email_cfg["address"]
+        msg["To"]      = email_cfg["address"]
+        msg.attach(MIMEText(plain, "plain"))
+        msg.attach(MIMEText(html,  "html"))
+
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=15) as s:
+            s.login(email_cfg["address"], email_cfg["password"])
+            s.send_message(msg)
+    except Exception as exc:
+        err = f"  [email error] T{tier} {ticker}: {exc}"
+        print(err)
+        log_alert(err, log_path)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     global _RUNNING
 
-    parser = argparse.ArgumentParser(description="FRD Intraday Short Scanner")
+    parser = argparse.ArgumentParser(description="Strategy G — Failed Bounce Reversal Short Scanner")
     parser.add_argument(
         "--reset-email",
         action="store_true",
@@ -872,8 +1201,9 @@ def main():
     print(f"  Vol ratio : today/20d-avg >= {VOL_RATIO_MIN}")
     print(f"  Signal    : down >={MIN_DOWN_PCT:.0%} from prev close"
           f"  AND  >={HOD_FADE_PCT:.0%} off HOD  (streak <={MAX_STREAK})")
-    print(f"  Stop loss : {STOP_PCT:.0%} above entry  |  Exit: EOD")
-    print(f"  Backtest  : n=12, WR=75%, Exp=+8.0%  (Dec 2025 - Jun 2026)")
+    print(f"  Stop loss : {STOP_PCT:.0%} above entry")
+    print(f"  Exit      : D+2 open if profitable (< entry); else D+1 EOD")
+    print(f"  Backtest  : n=12, WR=83%, Exp=+9.8%  (Dec 2025 - Jun 2026)  [Strategy 4 exit]")
     print(f"  Poll      : every {POLL_SECS // 60} min  |  Log: {log_path}")
     print()
 
@@ -884,7 +1214,7 @@ def main():
     with open(log_path, "a", encoding="utf-8") as fh:
         fh.write(f"\n{'='*72}\n")
         fh.write(
-            f"FRD Scanner session: "
+            f"Strategy G scanner session: "
             f"{datetime.now(ET).strftime('%Y-%m-%d %H:%M ET')}\n"
         )
         fh.write(f"{'='*72}\n")
@@ -928,6 +1258,24 @@ def main():
     alerted: set = set()
     session_alerts: list = []
 
+    # ── Per-ticker state for Tier 1 and Tier 2 ───────────────────────────────
+    # Each entry is initialised lazily below but we pre-populate to avoid races.
+    ticker_states: dict = {
+        tkr: {
+            # Tier 1 — HOD Fade
+            "hod_at_11am":        None,   # morning HOD frozen after 11:00 AM
+            "tier1_alerted":      False,
+            "tier1_invalidated":  False,  # True if new high made after HOD frozen
+            # Tier 2 — Failed Morning Push
+            "ten_am_close":       None,   # 10:00 AM bar close
+            "hod_at_10am":        None,   # highest high up to 10:00 AM
+            "tier2_alerted":      False,
+        }
+        for tkr in tickers
+    }
+
+    csv_path = os.path.join(SCRIPT_DIR, f"frd_alerts_{today.isoformat()}.csv")
+
     # ── Wait for market open ──────────────────────────────────────────────────
     while _RUNNING:
         now_et = datetime.now(ET)
@@ -970,13 +1318,13 @@ def main():
 
         # Poll
         snapshots = get_snapshots(tickers)
-        print_scan_table(universe, snapshots, alerted)
+        print_scan_table(universe, snapshots, alerted, ticker_states)
 
-        # Check for new signals
+        # ── FRD signal check (existing logic, unchanged) ──────────────────────
         for ticker, meta in universe.items():
             if ticker in alerted:
                 continue
-            snap      = snapshots.get(ticker, {})
+            snap               = snapshots.get(ticker, {})
             triggered, details = check_frd(ticker, snap, meta)
             if triggered:
                 alerted.add(ticker)
@@ -985,22 +1333,113 @@ def main():
                 log_alert(alert_text, log_path)
 
                 trash_score = meta.get("trash_score", 0)
-                if trash_score >= TRASH_SCORE_THRESHOLD:
-                    notify(ticker, details, trash_score)
-                    if email_cfg:
-                        send_email_alert(ticker, details, meta, email_cfg, log_path)
-                    bang = "!" * 72
-                    print(f"\n{bang}")
-                    print(f"  {alert_text}")
-                    print(f"{bang}\n")
-                else:
-                    print(
-                        f"\n  [FRD] {alert_text}"
-                        f"  (score {trash_score}/10 — console only)\n"
-                    )
+                notify(ticker, details, trash_score)
+                if email_cfg:
+                    send_email_alert(ticker, details, meta, email_cfg, log_path)
+                bang = "!" * 72
+                print(f"\n{bang}")
+                print(f"  {alert_text}")
+                print(f"{bang}\n")
+
+        # ── Tier 1 & Tier 2 checks (new intraday entry tiers) ────────────────
+        now_time = now_et.time()
+        if now_time >= TEN_AM:
+            for ticker, meta in universe.items():
+                state = ticker_states.setdefault(ticker, {
+                    "hod_at_11am": None, "tier1_alerted": False,
+                    "tier1_invalidated": False,
+                    "ten_am_close": None, "hod_at_10am": None,
+                    "tier2_alerted": False,
+                })
+
+                if state["tier1_alerted"] and state["tier2_alerted"]:
+                    continue   # both tiers already fired for this ticker
+
+                snap = snapshots.get(ticker, {})
+
+                # Fetch 5-min bars once per ticker per poll (only when needed)
+                bars_5m = get_5m_bars(ticker, today)
+                if not bars_5m:
+                    continue
+
+                # ── Update state from 5-min bars ──────────────────────────────
+                # Freeze the morning HOD at 11:00 AM (first poll at or after 11am)
+                if now_time >= HOD_WINDOW_END and state["hod_at_11am"] is None:
+                    morning = [b for b in bars_5m
+                               if b["ts"].time() <= HOD_WINDOW_END]
+                    if morning:
+                        state["hod_at_11am"] = max(b["h"] for b in morning)
+
+                # Record 10am reference values (first poll at or after 10am)
+                if state["ten_am_close"] is None:
+                    ten_bars = [b for b in bars_5m
+                                if b["ts"].hour == 10 and b["ts"].minute == 0]
+                    if ten_bars:
+                        state["ten_am_close"] = ten_bars[0]["c"]
+                        pre_10 = [b for b in bars_5m
+                                  if b["ts"] <= ten_bars[0]["ts"]]
+                        state["hod_at_10am"] = (
+                            max(b["h"] for b in pre_10) if pre_10 else None
+                        )
+
+                snap_det = {
+                    "prev_close": (snap.get("prevDay") or {}).get("c")
+                                  or meta.get("prev_close"),
+                }
+
+                # ── Tier 1: HOD Fade ──────────────────────────────────────────
+                if (not state["tier1_alerted"]
+                        and not state["tier1_invalidated"]
+                        and now_time >= HOD_WINDOW_END
+                        and state["hod_at_11am"] is not None):
+                    t1_trig, t1_price = check_tier1_hod_fade(bars_5m, state)
+                    if t1_trig and t1_price:
+                        state["tier1_alerted"] = True
+                        hod_ref    = state["hod_at_11am"]
+                        alert_text = format_tier_alert(
+                            1, ticker, t1_price, hod_ref, meta, snap_det)
+                        session_alerts.append(alert_text)
+                        log_alert(alert_text, log_path)
+                        log_alert_csv(
+                            csv_path, 1, ticker, t1_price,
+                            hod_ref, meta, snap_det)
+                        notify_tier(1, ticker, t1_price, hod_ref, meta)
+                        if email_cfg:
+                            send_tier_email(
+                                1, ticker, t1_price, hod_ref,
+                                meta, snap_det, email_cfg, log_path)
+                        bang = "!" * 72
+                        print(f"\n{bang}")
+                        print(f"  {alert_text}")
+                        print(f"{bang}\n")
+
+                # ── Tier 2: Failed Morning Push ───────────────────────────────
+                if (not state["tier2_alerted"]
+                        and state["ten_am_close"] is not None
+                        and state["hod_at_10am"] is not None):
+                    t2_trig, t2_price = check_tier2_failed_push(bars_5m, state)
+                    if t2_trig and t2_price:
+                        state["tier2_alerted"] = True
+                        hod_ref    = state["hod_at_10am"]
+                        alert_text = format_tier_alert(
+                            2, ticker, t2_price, hod_ref, meta, snap_det)
+                        session_alerts.append(alert_text)
+                        log_alert(alert_text, log_path)
+                        log_alert_csv(
+                            csv_path, 2, ticker, t2_price,
+                            hod_ref, meta, snap_det)
+                        notify_tier(2, ticker, t2_price, hod_ref, meta)
+                        if email_cfg:
+                            send_tier_email(
+                                2, ticker, t2_price, hod_ref,
+                                meta, snap_det, email_cfg, log_path)
+                        bang = "!" * 72
+                        print(f"\n{bang}")
+                        print(f"  {alert_text}")
+                        print(f"{bang}\n")
 
         if not session_alerts:
-            print(f"  No FRD signals yet. Next scan at "
+            print(f"  No signals yet. Next scan at "
                   f"{(now_et + timedelta(seconds=POLL_SECS)).strftime('%H:%M ET')}.")
         else:
             print(f"  {len(session_alerts)} alert(s) logged this session.")
@@ -1014,7 +1453,7 @@ def main():
 
     # ── Session summary ───────────────────────────────────────────────────────
     print(f"\n{'='*72}")
-    print(f"  Session complete — {len(session_alerts)} FRD alert(s) fired")
+    print(f"  Session complete — {len(session_alerts)} STRAT-G alert(s) fired")
     if session_alerts:
         for a in session_alerts:
             print(f"    {a}")
