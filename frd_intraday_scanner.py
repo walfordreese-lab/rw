@@ -59,19 +59,21 @@ except Exception:
     _NOTIFY_AVAILABLE = False
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-PRICE_MIN      = 3.0
-PRICE_MAX      = 10.0
-GAIN_3D_MIN    = 1.00        # 100% minimum 3-day gain
-VOL_MIN        = 1_000_000
-MAX_STREAK     = 4
+# Strategy G — "Failed Bounce Reversal Short"
+# Derived from 150K-combo grid search over 6 months of Polygon data.
+# Backtest: n=12, WR=75%, Exp=+8.0% per trade (Dec 2025–Jun 2026).
+PRICE_MIN      = 2.0
+PRICE_MAX      = 25.0
+GAIN_3D_MIN    = 0.75        # 75% minimum 3-day gain
+VOL_MIN        = 300_000     # 20-day avg volume floor
+MAX_STREAK     = 1           # <=1 consecutive green close (the key filter)
+MIN_DOWN_PCT   = 0.10        # close must be >=10% below prev close
+VOL_RATIO_MIN  = 0.30        # today vol / 20d avg must be >= 0.30
 
-VOL_RATIO_LOW  = 0.10        # include if most-recent-day vol / run-avg < this
-VOL_RATIO_HIGH = 0.50        # OR if most-recent-day vol / run-avg >= this
-
-STOP_PCT       = 0.12        # 12% hard stop above entry
-HOD_FADE_PCT   = 0.03        # must be >= 3% off HOD to confirm fading
+STOP_PCT       = 0.15        # 15% hard stop above entry
+HOD_FADE_PCT   = 0.12        # must be >= 12% off HOD to confirm reversal
 POLL_SECS      = 300         # 5-minute poll interval
-LOOKBACK_DAYS  = 7           # trading days of history for universe scan
+LOOKBACK_DAYS  = 25          # trading days of history (needs 20+ for vol avg)
 TRASH_SCORE_THRESHOLD = 7    # >= this triggers popup + email; lower = console only
 
 ET             = ZoneInfo("America/New_York")
@@ -306,16 +308,16 @@ def _streak(closes: list) -> int:
 def build_pump_universe(lookback: int = LOOKBACK_DAYS) -> dict:
     """
     Scan the last `lookback` trading days to identify stocks currently in
-    an active multi-day pump that match all universe criteria.
+    an active multi-day pump matching all Strategy G universe criteria.
 
     Returns
     -------
     dict  {ticker: metadata}
         prev_close   float  -- yesterday's closing price
-        run_avg_vol  float  -- 3-day average volume during the run
-        roll3_gain   float  -- 3-bar rolling gain (e.g. 1.35 = 135%)
-        streak       int    -- consecutive green closes
-        vol_ratio    float  -- most-recent-day vol / prior-3d-avg-vol
+        run_avg_vol  float  -- 20-day average volume
+        roll3_gain   float  -- 3-bar rolling gain (e.g. 0.75 = 75%)
+        streak       int    -- consecutive green closes (must be <= 1)
+        vol_ratio    float  -- most-recent-day vol / 20-day avg vol
     """
     today     = date.today()
     cal_start = today - timedelta(days=lookback * 2 + 5)
@@ -368,9 +370,10 @@ def build_pump_universe(lookback: int = LOOKBACK_DAYS) -> dict:
         if roll3 < GAIN_3D_MIN:
             continue
 
-        # 3-day avg volume
-        run_avg_vol = sum(vols[-3:]) / 3
-        if run_avg_vol < VOL_MIN:
+        # 20-day avg volume (all days except the signal day)
+        hist_vols   = vols[:-1]
+        avg_20d     = sum(hist_vols[-20:]) / len(hist_vols[-20:]) if hist_vols else 0.0
+        if avg_20d < VOL_MIN:
             continue
 
         # Streak
@@ -378,15 +381,14 @@ def build_pump_universe(lookback: int = LOOKBACK_DAYS) -> dict:
         if s > MAX_STREAK:
             continue
 
-        # Vol ratio: most recent day vs prior 3-day avg
-        prior_avg = sum(vols[-4:-1]) / 3 if len(vols) >= 4 else 0.0
-        vol_ratio = vols[-1] / prior_avg if prior_avg > 0 else 0.0
-        if not (vol_ratio < VOL_RATIO_LOW or vol_ratio >= VOL_RATIO_HIGH):
+        # Vol ratio: most recent day vs 20-day avg
+        vol_ratio = vols[-1] / avg_20d if avg_20d > 0 else 0.0
+        if vol_ratio < VOL_RATIO_MIN:
             continue
 
         universe[ticker] = {
             "prev_close":  last_close,
-            "run_avg_vol": run_avg_vol,
+            "run_avg_vol": avg_20d,
             "roll3_gain":  roll3,
             "streak":      s,
             "vol_ratio":   vol_ratio,
@@ -414,18 +416,22 @@ def check_frd(ticker: str, snap: dict, meta: dict) -> tuple:
     if not (current and hod and prev_c and prev_c > 0 and hod > 0):
         return False, {}
 
-    gone_red   = current < prev_c
-    fading_hod = current < hod * (1.0 - HOD_FADE_PCT)
+    pct_vs_prev = (current - prev_c) / prev_c
+    pct_off_hod = (hod - current) / hod if hod > 0 else 0.0
+
+    # Strategy G conditions
+    gone_red   = pct_vs_prev <= -MIN_DOWN_PCT           # >= 10% below prev close
+    fading_hod = pct_off_hod >= HOD_FADE_PCT            # >= 12% off HOD
 
     details = {
-        "current":    current,
-        "prev_close": prev_c,
-        "hod":        hod,
-        "today_vol":  today_vol,
-        "gone_red":   gone_red,
-        "fading_hod": fading_hod,
-        "pct_vs_prev": (current - prev_c) / prev_c,
-        "pct_off_hod": (hod - current) / hod if hod > 0 else 0.0,
+        "current":     current,
+        "prev_close":  prev_c,
+        "hod":         hod,
+        "today_vol":   today_vol,
+        "gone_red":    gone_red,
+        "fading_hod":  fading_hod,
+        "pct_vs_prev": pct_vs_prev,
+        "pct_off_hod": pct_off_hod,
     }
     return gone_red and fading_hod, details
 
@@ -439,9 +445,9 @@ def format_alert(ticker: str, details: dict, meta: dict | None = None) -> str:
     ts       = (meta or {}).get("trash_score", 0)
     warn     = " ⚠️" if ts >= TRASH_SCORE_THRESHOLD else ""
     return (
-        f"[{now_str}] FRD SIGNAL: {ticker}"
+        f"[{now_str}] STRAT-G SHORT: {ticker}"
         f"  Entry zone: ${entry:.2f}"
-        f"  Stop: ${stop:.2f} (12% above entry)"
+        f"  Stop: ${stop:.2f} ({STOP_PCT:.0%} above entry)"
         f"  | prev close ${details['prev_close']:.2f}"
         f"  HOD ${details['hod']:.2f}"
         f"  ({pct_off:.1%} off high, {pct_day:+.1%} on day)"
@@ -547,8 +553,8 @@ def notify(ticker: str, details: dict, trash_score: int = 0) -> None:
     entry = details["current"]
     stop  = round(entry * (1.0 + STOP_PCT), 2)
     warn  = " ⚠️" if trash_score >= TRASH_SCORE_THRESHOLD else ""
-    title = f"FRD SIGNAL: {ticker}  |  Trash {trash_score}/10{warn}"
-    line2 = f"Entry zone: ${entry:.2f}   Stop: ${stop:.2f} (+12%)"
+    title = f"STRAT-G SHORT: {ticker}  |  Trash {trash_score}/10{warn}"
+    line2 = f"Entry zone: ${entry:.2f}   Stop: ${stop:.2f} (+{STOP_PCT:.0%})"
     line3 = (
         f"Prev close ${details['prev_close']:.2f}  "
         f"HOD ${details['hod']:.2f}  "
@@ -596,11 +602,13 @@ def print_scan_table(universe: dict, snapshots: dict, alerted: set) -> None:
         if ticker in alerted:
             status = "ALERTED"
         elif triggered:
-            status = "** FRD SIGNAL **"
+            status = "** STRAT-G SIGNAL **"
         elif det["gone_red"] and not det["fading_hod"]:
-            status = f"red  ({det['pct_off_hod']:.1%} off HOD, not fading enough)"
-        elif not det["gone_red"]:
-            status = f"green  ({det['pct_vs_prev']:+.1%} vs prev)"
+            status = f"down>=10%  ({det['pct_off_hod']:.1%} off HOD, need >=12%)"
+        elif det["fading_hod"] and not det["gone_red"]:
+            status = f"HOD-fade OK  ({det['pct_vs_prev']:+.1%} vs prev, need <=-10%)"
+        elif not det["gone_red"] and not det["fading_hod"]:
+            status = f"watching  ({det['pct_vs_prev']:+.1%} vs prev)"
         else:
             status = "watching"
 
@@ -754,11 +762,11 @@ def send_email_alert(
     trash_score = meta.get("trash_score", 0)
     warn        = " ⚠️" if trash_score >= TRASH_SCORE_THRESHOLD else ""
 
-    subject = f"FRD SIGNAL: {ticker}  |  Trash {trash_score}/10{warn}"
+    subject = f"STRAT-G SHORT: {ticker}  |  Trash {trash_score}/10{warn}"
 
     # ── Plain-text body ───────────────────────────────────────────────────────
     plain = (
-        f"FRD SIGNAL: {ticker}\n"
+        f"STRAT-G SHORT SIGNAL: {ticker}\n"
         f"{'='*40}\n"
         f"Time:           {now}\n"
         f"Ticker:         {ticker}\n"
@@ -776,7 +784,8 @@ def send_email_alert(
         f"Trash score:    {trash_score}/10{warn}\n"
         f"{'='*40}\n"
         f"Trade plan: Short at open tomorrow if price stays below ${details['prev_close']:.2f}.\n"
-        f"Hard stop {STOP_PCT:.0%} above entry = ${stop:.2f}.\n"
+        f"Hard stop {STOP_PCT:.0%} above entry = ${stop:.2f}.  Exit at EOD close.\n"
+        f"Strategy G — streak<={MAX_STREAK}, HOD>={HOD_FADE_PCT:.0%}, down>={MIN_DOWN_PCT:.0%}\n"
     )
 
     # ── HTML body ─────────────────────────────────────────────────────────────
@@ -789,7 +798,7 @@ def send_email_alert(
 
     trash_color = "#c0392b" if trash_score >= TRASH_SCORE_THRESHOLD else "#444"
     html = f"""<html><body style='font-family:monospace;font-size:14px'>
-<h2 style='color:#c0392b;margin-bottom:4px'>FRD SIGNAL: {ticker}</h2>
+<h2 style='color:#c0392b;margin-bottom:4px'>STRAT-G SHORT: {ticker}</h2>
 <p style='color:#666;margin-top:0'>{now}</p>
 <table style='border-collapse:collapse;margin-bottom:16px'>
   {row("Ticker", ticker, bold=True)}
@@ -814,7 +823,8 @@ def send_email_alert(
 <p style='margin-top:16px;color:#444'>
   <b>Trade plan:</b> Short at open if price stays below
   ${details['prev_close']:.2f}.&nbsp; Hard stop {STOP_PCT:.0%} above entry
-  = ${stop:.2f}.
+  = ${stop:.2f}.&nbsp; Exit at EOD close.<br>
+  <span style='color:#888;font-size:12px'>Strategy G: streak&le;{MAX_STREAK}, HOD&ge;{HOD_FADE_PCT:.0%}, down&ge;{MIN_DOWN_PCT:.0%}</span>
 </p>
 </body></html>"""
 
@@ -853,16 +863,18 @@ def main():
     today    = date.today()
     log_path = os.path.join(SCRIPT_DIR, f"frd_alerts_{today.isoformat()}.txt")
 
-    print("+" + "=" * 62 + "+")
-    print("|        FRD Intraday Short Scanner — Polygon.io          |")
-    print("+" + "=" * 62 + "+")
-    print(f"  Universe filters : ${PRICE_MIN}-${PRICE_MAX}  |  3d gain >=100%"
-          f"  |  avg vol >=1M  |  streak <={MAX_STREAK}")
-    print(f"  Vol ratio        : < {VOL_RATIO_LOW}  OR  >= {VOL_RATIO_HIGH}")
-    print(f"  FRD signal       : price < prev close  AND  >={HOD_FADE_PCT:.0%} off HOD")
-    print(f"  Stop loss        : {STOP_PCT:.0%} above entry")
-    print(f"  Poll interval    : {POLL_SECS // 60} minutes")
-    print(f"  Log file         : {log_path}")
+    print("+" + "=" * 66 + "+")
+    print("|      Strategy G — Failed Bounce Reversal Short Scanner         |")
+    print("|                     Polygon.io                                 |")
+    print("+" + "=" * 66 + "+")
+    print(f"  Universe  : ${PRICE_MIN}-${PRICE_MAX}  |  3d gain >={GAIN_3D_MIN:.0%}"
+          f"  |  avg vol >={VOL_MIN//1000:.0f}K  |  streak <={MAX_STREAK}")
+    print(f"  Vol ratio : today/20d-avg >= {VOL_RATIO_MIN}")
+    print(f"  Signal    : down >={MIN_DOWN_PCT:.0%} from prev close"
+          f"  AND  >={HOD_FADE_PCT:.0%} off HOD  (streak <={MAX_STREAK})")
+    print(f"  Stop loss : {STOP_PCT:.0%} above entry  |  Exit: EOD")
+    print(f"  Backtest  : n=12, WR=75%, Exp=+8.0%  (Dec 2025 - Jun 2026)")
+    print(f"  Poll      : every {POLL_SECS // 60} min  |  Log: {log_path}")
     print()
 
     # ── Email setup ───────────────────────────────────────────────────────────
@@ -885,7 +897,7 @@ def main():
         print("\n  No tickers meet universe criteria today.")
         print("  (Market may be quiet, or it is early in the week.)\n")
     else:
-        print(f"\n  Universe: {len(universe)} tickers — fetching fundamental scores ...\n")
+        print(f"\n  Strategy G universe: {len(universe)} tickers — fetching fundamental scores ...\n")
         for tkr in list(universe.keys()):
             ts, bd = fetch_fundamental_score(tkr)
             universe[tkr]["trash_score"]     = ts
