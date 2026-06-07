@@ -4,10 +4,11 @@ pullback_scanner.py
 ===================
 End-of-day pullback scanner. Run after market close (4:30 PM ET or later).
 
-Finds US equities meeting all of:
-  - Avg daily $ vol $500K–$50M  (mid/small cap proxy)
+Finds Russell 1000 equities meeting all of:
+  - Russell 1000 universe (top 1000 US stocks by market cap)
+  - Avg daily $ vol $500K–$50M  (within-R1000 liquidity band)
   - Close above 21-day MA
-  - Close down 8%+ from 20-day rolling high (close-to-close)
+  - Close down 10%+ from 20-day rolling high (close-to-close)
   - Today's candle closed green (close > open)
 
 Outputs:
@@ -27,8 +28,8 @@ Email setup (one-time):
      OR create a file named .env in this directory containing:
        GMAIL_APP_PASSWORD=xxxxxxxxxxxx
 
-Historical edge (2023-2025 backtest, n=8,434):
-  dn10%+ | above 21MA | green candle | 20d hold → +7.53% avg expectancy
+Historical edge (2023-2025 backtest, n=1,181):
+  Russell 1000 | dn10%+ | above 21MA | green candle | 20d hold → +9.29% avg expectancy
 """
 
 import sys, io, os, pickle, argparse, smtplib, warnings
@@ -46,6 +47,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 BASE_DIR    = Path(__file__).parent
 CACHE_DIR   = BASE_DIR / "poly_cache"
+FUND_DIR    = BASE_DIR / "fundamentals_cache"
 RESULTS_DIR = BASE_DIR / "scanner_results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -77,6 +79,44 @@ AVOL_PERIOD      = 20            # bars for avg volume calculation
 DVOL_PERIOD      = 20            # bars for dollar volume classification
 HISTORY_DAYS     = 90            # calendar days of history to load
 MIN_BARS         = 25            # minimum history bars required per ticker
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# RUSSELL 1000 UNIVERSE
+# ════════════════════════════════════════════════════════════════════════════════
+
+def load_russell1000() -> frozenset:
+    """
+    Return the Russell 1000 proxy set built by pullback_quality_filters.py.
+    Cached in fundamentals_cache/index_members.pkl.
+    Falls back to top-1000 by market cap from individual fundamentals_cache pkl
+    files if the index cache is absent.
+    """
+    index_cache = FUND_DIR / "index_members.pkl"
+    if index_cache.exists():
+        with open(index_cache, "rb") as f:
+            d = pickle.load(f)
+        r1000 = frozenset(d.get("r1000", []))
+        if r1000:
+            return r1000
+
+    # Build proxy on the fly from per-ticker fundamentals cache
+    print("  [r1000] Building proxy from fundamentals cache ...", flush=True)
+    caps = {}
+    for path in FUND_DIR.glob("*.pkl"):
+        if path.stem == "etf_tickers" or path.stem == "index_members":
+            continue
+        try:
+            d = pickle.load(open(path, "rb"))
+            mc = d.get("market_cap")
+            if mc and mc > 0:
+                caps[path.stem] = float(mc)
+        except Exception:
+            pass
+    sorted_caps = sorted(caps.items(), key=lambda x: x[1], reverse=True)
+    r1000 = frozenset(t for t, _ in sorted_caps[:1000])
+    print(f"  [r1000] {len(r1000)} tickers in proxy.", flush=True)
+    return r1000
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -346,13 +386,13 @@ def fmt_email_html(signals: list[dict], scan_date: date, next_day: date) -> str:
     <strong>Hold:</strong> 20 trading days (time exit)
   </p>
   <p style="margin:4px 0;color:#555;font-size:13px">
-    Filter: mid/small cap ($500K&ndash;$50M avg $ vol) &bull; above 21MA &bull;
-    10%+ off 20d high &bull; green candle
+    Filter: Russell 1000 universe &bull; above 21MA &bull;
+    10%+ off 20d high &bull; green candle &bull; $500K&ndash;$50M avg $ vol
   </p>
   <p style="margin:4px 0;color:#27ae60;font-size:13px">
     <strong>Historical edge (2023&ndash;2025):</strong>
-    dn10%+ + above-21MA + green candle + 20d hold &rarr;
-    <strong>+7.53% avg expectancy</strong> &nbsp;(n=8,434 trades)
+    Russell 1000 + dn10%+ + above-21MA + green candle + 20d hold &rarr;
+    <strong>+9.29% avg expectancy</strong> &nbsp;(n=1,181 trades)
   </p>
   <br>
   {body_content}
@@ -371,8 +411,8 @@ def fmt_email_text(signals: list[dict], scan_date: date, next_day: date) -> str:
     header = (f"Pullback Scanner — {scan_date}\n"
               f"{n} signal{'s' if n!=1 else ''} found\n"
               f"Entry: Open on {next_day}\n"
-              f"Strategy: mid/small | 10%+ off 20d high | above 21MA | green | 20d hold\n"
-              f"Historical edge: +7.53% avg expectancy (2023-2025, n=8,434)\n"
+              f"Strategy: Russell 1000 | dn10%+ off 20d high | above 21MA | green | 20d hold\n"
+              f"Historical edge: +9.29% avg expectancy (2023-2025, n=1,181)\n"
               f"\n{fmt_signals_table(signals)}\n")
     return header
 
@@ -480,8 +520,16 @@ def main():
     if etf_removed:
         print(f"  {etf_removed} ETF/leveraged tickers excluded.", flush=True)
 
+    # ── Russell 1000 universe filter ─────────────────────────────────────────
+    r1000 = load_russell1000()
+    before_r1000 = len(today_df)
+    today_df = today_df[today_df["ticker"].isin(r1000)].copy()
+    r1000_removed = before_r1000 - len(today_df)
+    print(f"  {r1000_removed} non-Russell-1000 tickers excluded "
+          f"({len(today_df)} remain).", flush=True)
+
     active_tickers = set(today_df["ticker"].tolist())
-    print(f"  {len(active_tickers):,} active tickers (green candles) to evaluate.", flush=True)
+    print(f"  {len(active_tickers):,} Russell 1000 tickers to evaluate.", flush=True)
 
     # ── Load price history ───────────────────────────────────────────────────
     end_hist = scan_date - timedelta(days=1)
