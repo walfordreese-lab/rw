@@ -27,8 +27,8 @@ Email setup (one-time):
      OR create a file named .env in this directory containing:
        GMAIL_APP_PASSWORD=xxxxxxxxxxxx
 
-Historical edge (2023-2025 backtest, n=14,953):
-  dn8%+ | above 21MA | green candle | 20d hold → +6.51% avg expectancy
+Historical edge (2023-2025 backtest, n=8,434):
+  dn10%+ | above 21MA | green candle | 20d hold → +7.53% avg expectancy
 """
 
 import sys, io, os, pickle, argparse, smtplib, warnings
@@ -70,7 +70,7 @@ RECIPIENT         = "walfordreese@gmail.com"
 # ── Scanner thresholds ──────────────────────────────────────────────────────────
 DVOL_MIN         = 500_000       # $500K min avg daily $ vol
 DVOL_MAX         = 50_000_000    # $50M  max avg daily $ vol
-PCT_OFF_HIGH_MIN = 0.08          # 8% minimum pullback from 20d high
+PCT_OFF_HIGH_MIN = 0.10          # 10% minimum pullback from 20d high
 MA_PERIOD        = 21            # MA used for quality filter
 HIGH_PERIOD      = 20            # rolling high lookback
 AVOL_PERIOD      = 20            # bars for avg volume calculation
@@ -347,12 +347,12 @@ def fmt_email_html(signals: list[dict], scan_date: date, next_day: date) -> str:
   </p>
   <p style="margin:4px 0;color:#555;font-size:13px">
     Filter: mid/small cap ($500K&ndash;$50M avg $ vol) &bull; above 21MA &bull;
-    8%+ off 20d high &bull; green candle
+    10%+ off 20d high &bull; green candle
   </p>
   <p style="margin:4px 0;color:#27ae60;font-size:13px">
     <strong>Historical edge (2023&ndash;2025):</strong>
-    dn8%+ + above-21MA + green candle + 20d hold &rarr;
-    <strong>+6.51% avg expectancy</strong> &nbsp;(n=14,953 trades)
+    dn10%+ + above-21MA + green candle + 20d hold &rarr;
+    <strong>+7.53% avg expectancy</strong> &nbsp;(n=8,434 trades)
   </p>
   <br>
   {body_content}
@@ -371,8 +371,8 @@ def fmt_email_text(signals: list[dict], scan_date: date, next_day: date) -> str:
     header = (f"Pullback Scanner — {scan_date}\n"
               f"{n} signal{'s' if n!=1 else ''} found\n"
               f"Entry: Open on {next_day}\n"
-              f"Strategy: mid/small | 8%+ off 20d high | above 21MA | green | 20d hold\n"
-              f"Historical edge: +6.51% avg expectancy (2023-2025, n=14,953)\n"
+              f"Strategy: mid/small | 10%+ off 20d high | above 21MA | green | 20d hold\n"
+              f"Historical edge: +7.53% avg expectancy (2023-2025, n=8,434)\n"
               f"\n{fmt_signals_table(signals)}\n")
     return header
 
