@@ -1,0 +1,146 @@
+================================================================================
+  Pullback Fundamental Quality Layer
+  Base: mid+small | dn8-10% | green candle | 20d hold | time exit
+================================================================================
+
+[1/6] Loading bars ...
+  Loading pkl: 2022-01-01 -> 2025-08-13 ...
+  943 days, 17,031 tickers.
+
+[2/6] Classifying universe + computing avg dollar volume ...
+  large=1,537  mid=2,746  small=5,094  other=5,790
+
+  SPY RS reference built (843 days).
+
+[3/6] Scanning for dn8/dn10 green-candle signals (mid+small) ...
+  1,000/7,840 tickers, 11,204 signals ...
+  2,000/7,840 tickers, 24,351 signals ...
+  3,000/7,840 tickers, 35,998 signals ...
+  4,000/7,840 tickers, 49,196 signals ...
+  5,000/7,840 tickers, 56,056 signals ...
+  6,000/7,840 tickers, 59,160 signals ...
+  7,000/7,840 tickers, 61,846 signals ...
+  Signals collected: 62,163 total | dn8=62,163 | dn10=43,237
+  Unique tickers:    5,301
+
+[4/6] Fetching fundamentals for 5,301 tickers (499 cached, 4802 to fetch) ...
+  Est. time for API calls: ~21 min
+  500/5301 (9%) ...
+  1000/5301 (19%) ...
+  1500/5301 (28%) ...
+  2000/5301 (38%) ...
+  2500/5301 (47%) ...
+  3000/5301 (57%) ...
+  3500/5301 (66%) ...
+  4000/5301 (75%) ...
+  4500/5301 (85%) ...
+  5000/5301 (94%) ...
+  Done. 5,301 tickers loaded.
+
+[5/6] Computing fundamental flags ...
+
+  Filter coverage and pass rates (out of 62,163 total signals):
+    Revenue growth YoY              data=43,531  pass=24,986  (40% of all sigs)
+    Pos EPS / Improving EPS         data=46,373  pass=30,210  (49% of all sigs)
+    Gross margin >30%               data=25,772  pass=16,555  (27% of all sigs)
+    D/E <1.0                        data=42,213  pass=21,157  (34% of all sigs)
+    Mkt cap >$500M                  data=44,236  pass=26,600  (43% of all sigs)
+    Avg $ vol >$10M                 data=62,163  pass=20,361  (33% of all sigs)
+    Not bio/pharma+0 rev            data=62,163  pass=58,421  (94% of all sigs)
+    Price >$5                       data=62,163  pass=45,757  (74% of all sigs)
+
+[6/6] Running filter combination grid ...
+
+==================================================================================================
+  DN8  FUNDAMENTAL FILTER COMPARISON  (mid+small, green candle, 20d hold, time exit)
+==================================================================================================
+  Filter                                                 n  %Base     WR    AvgW    AvgL      Exp
+  ------------------------------------------------------------------------------------------------
+  BASELINE (no filter)                               62163   100%    57%  +17.3%  -11.3%  +5.15%
+  ------------------------------------------------------------------------------------------------
+  -- Individual filters --
+  D/E <1.0                                           21157    34%    56%  +18.6%  -11.8%  +5.12%
+  Mkt cap >$500M                                     26600    43%    60%  +14.4%   -9.1%  +5.08%
+  Not bio/pharma+0 rev                               58421    94%    58%  +16.8%  -11.0%  +5.05%
+  Gross margin >30%                                  16555    27%    55%  +18.3%  -11.7%  +4.98%
+  Avg $ vol >$10M                                    20361    33%    59%  +15.1%   -9.9%  +4.92%
+  Pos EPS / Improving EPS                            30210    49%    58%  +15.7%  -10.5%  +4.65%
+  Revenue growth YoY                                 24986    40%    58%  +15.6%  -10.7%  +4.41%
+  Price >$5                                          45757    74%    58%  +12.8%  -10.0%  +3.32%
+  -- Top pairs (n>=10) --
+  DE<1 + MCap>500M                                    9505    15%    60%  +15.0%   -9.7%  +5.03%
+  GrossM>30 + NoBioPharma                            16391    26%    56%  +18.3%  -11.6%  +5.00%
+  MCap>500M + DVol>10M                               14238    23%    61%  +14.1%   -9.1%  +4.94%
+  DE<1 + NoBioPharma                                 18250    29%    56%  +17.6%  -11.4%  +4.91%
+  MCap>500M + NoBioPharma                            25109    40%    61%  +13.8%   -8.8%  +4.90%
+  DVol>10M + NoBioPharma                             19530    31%    60%  +14.8%   -9.8%  +4.86%
+  PosEPS + DE<1                                      13015    21%    57%  +16.3%  -10.7%  +4.75%
+  RevGrowth + GrossM>30                               9877    16%    57%  +16.8%  -11.2%  +4.63%
+  GrossM>30 + MCap>500M                               7341    12%    60%  +14.2%   -9.7%  +4.57%
+  DE<1 + DVol>10M                                     7156    12%    59%  +14.9%  -10.2%  +4.57%
+  PosEPS + GrossM>30                                 11068    18%    56%  +16.3%  -10.5%  +4.56%
+  PosEPS + MCap>500M                                 15792    25%    61%  +12.9%   -8.4%  +4.54%
+  GrossM>30 + DE<1                                    8198    13%    56%  +17.0%  -11.1%  +4.53%
+  RevGrowth + MCap>500M                              13480    22%    61%  +13.2%   -8.7%  +4.53%
+  PosEPS + NoBioPharma                               28666    46%    58%  +15.2%  -10.2%  +4.52%
+  -- Top triples (n>=10) --
+  MCap>500M+DVol>10M+NoBioPharma                     13590    22%    61%  +13.6%   -8.9%  +4.78%
+  DE<1+MCap>500M+DVol>10M                             5504     9%    61%  +14.0%   -9.5%  +4.74%
+  RevGrowth+GrossM>30+NoBioPharma                     9828    16%    56%  +16.8%  -11.1%  +4.62%
+  DE<1+MCap>500M+NoBioPharma                          8245    13%    60%  +13.6%   -9.2%  +4.62%
+  PosEPS+GrossM>30+NoBioPharma                       11010    18%    56%  +16.3%  -10.4%  +4.60%
+  RevGrowth+GrossM>30+MCap>500M                       5130     8%    60%  +14.1%   -9.6%  +4.56%
+  GrossM>30+MCap>500M+NoBioPharma                     7315    12%    60%  +14.2%   -9.6%  +4.56%
+  GrossM>30+DE<1+NoBioPharma                          8083    13%    56%  +16.9%  -10.9%  +4.55%
+  RevGrowth+DE<1+MCap>500M                            5235     8%    61%  +13.5%   -9.2%  +4.53%
+  PosEPS+DE<1+NoBioPharma                            11804    19%    58%  +15.4%  -10.2%  +4.53%
+==================================================================================================
+
+==================================================================================================
+  DN10 FUNDAMENTAL FILTER COMPARISON  (mid+small, green candle, 20d hold, time exit)
+==================================================================================================
+  Filter                                                 n  %Base     WR    AvgW    AvgL      Exp
+  ------------------------------------------------------------------------------------------------
+  BASELINE (no filter)                               43237   100%    57%  +20.1%  -12.4%  +6.04%
+  ------------------------------------------------------------------------------------------------
+  -- Individual filters --
+  Mkt cap >$500M                                     17174    40%    61%  +16.4%   -9.9%  +6.04%
+  Not bio/pharma+0 rev                               39980    92%    57%  +19.6%  -12.2%  +5.95%
+  Gross margin >30%                                  12046    28%    55%  +20.2%  -12.4%  +5.68%
+  Avg $ vol >$10M                                    13377    31%    59%  +17.3%  -11.0%  +5.68%
+  D/E <1.0                                           15590    36%    55%  +20.4%  -12.7%  +5.62%
+  Pos EPS / Improving EPS                            20437    47%    57%  +18.1%  -11.6%  +5.47%
+  Revenue growth YoY                                 16994    39%    57%  +17.7%  -11.7%  +5.09%
+  Price >$5                                          29176    67%    58%  +14.7%  -11.1%  +3.73%
+  -- Top pairs (n>=10) --
+  MCap>500M + DVol>10M                                9105    21%    61%  +16.1%   -9.8%  +5.89%
+  MCap>500M + NoBioPharma                            15937    37%    61%  +15.7%   -9.5%  +5.85%
+  GrossM>30 + NoBioPharma                            11897    28%    56%  +20.1%  -12.3%  +5.71%
+  DVol>10M + NoBioPharma                             12713    29%    59%  +17.0%  -10.8%  +5.66%
+  DE<1 + MCap>500M                                    6396    15%    60%  +16.6%  -10.5%  +5.64%
+  DE<1 + NoBioPharma                                 13085    30%    56%  +19.4%  -12.3%  +5.43%
+  PosEPS + DE<1                                       9075    21%    57%  +18.3%  -11.7%  +5.41%
+  PosEPS + MCap>500M                                  9711    22%    61%  +14.6%   -9.2%  +5.37%
+  PosEPS + NoBioPharma                               19061    44%    58%  +17.5%  -11.3%  +5.32%
+  PosEPS + GrossM>30                                  7700    18%    56%  +18.3%  -11.2%  +5.32%
+  RevGrowth + MCap>500M                               8389    19%    61%  +14.8%   -9.4%  +5.29%
+  RevGrowth + GrossM>30                               6963    16%    57%  +18.5%  -11.9%  +5.28%
+  RevGrowth + NoBioPharma                            16684    39%    57%  +17.5%  -11.7%  +5.05%
+  RevGrowth + DE<1                                    7003    16%    57%  +18.0%  -11.8%  +5.04%
+  GrossM>30 + MCap>500M                               4856    11%    59%  +15.5%  -10.3%  +5.03%
+  -- Top triples (n>=10) --
+  MCap>500M+DVol>10M+NoBioPharma                      8593    20%    61%  +15.6%   -9.6%  +5.73%
+  PosEPS+GrossM>30+NoBioPharma                        7647    18%    56%  +18.3%  -11.2%  +5.36%
+  RevGrowth+GrossM>30+NoBioPharma                     6918    16%    56%  +18.4%  -11.8%  +5.26%
+  RevGrowth+MCap>500M+NoBioPharma                     8281    19%    61%  +14.7%   -9.4%  +5.26%
+  RevGrowth+DE<1+MCap>500M                            3367     8%    60%  +15.1%   -9.9%  +5.24%
+  PosEPS+DE<1+NoBioPharma                             8005    19%    57%  +17.3%  -11.2%  +5.17%
+  DE<1+MCap>500M+NoBioPharma                          5359    12%    60%  +15.0%   -9.9%  +5.16%
+  DE<1+MCap>500M+DVol>10M                             3604     8%    60%  +15.5%  -10.2%  +5.16%
+  RevGrowth+MCap>500M+DVol>10M                        4877    11%    61%  +14.5%   -9.5%  +5.15%
+  PosEPS+MCap>500M+NoBioPharma                        9194    21%    61%  +13.9%   -8.9%  +5.10%
+==================================================================================================
+
+  Saved: fund_filter_dn8.csv  (93 rows)
+  Saved: fund_filter_dn10.csv  (93 rows)
+
