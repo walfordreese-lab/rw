@@ -80,6 +80,11 @@ DVOL_PERIOD      = 20            # bars for dollar volume classification
 HISTORY_DAYS     = 90            # calendar days of history to load
 MIN_BARS         = 25            # minimum history bars required per ticker
 
+# ── Position sizing ──────────────────────────────────────────────────────────────
+PORTFOLIO_SIZE   = 60_000        # total portfolio value
+RISK_PER_TRADE   = 600           # max $ risk per trade (1% of portfolio)
+STOP_PCT         = 0.10          # stop loss = entry price - 10%
+
 
 # ════════════════════════════════════════════════════════════════════════════════
 # RUSSELL 1000 UNIVERSE
@@ -295,6 +300,13 @@ def compute_signals(today_df: pd.DataFrame, bars: dict,
         avg_vol = float(np.mean(hist_vols[-avol_period:]))
         vol_ratio = today_vol / avg_vol if avg_vol > 0 else np.nan
 
+        # ── Position sizing (1% risk, 10% stop) ──────────────────────────────
+        stop       = round(today_close * (1 - STOP_PCT), 2)
+        risk_ps    = round(today_close * STOP_PCT, 4)          # = price - stop
+        shares     = int(RISK_PER_TRADE / risk_ps) if risk_ps > 0 else 0
+        pos_size   = round(shares * today_close, 2)
+        pct_port   = pos_size / PORTFOLIO_SIZE
+
         signals.append({
             "ticker":       ticker,
             "price":        today_close,
@@ -305,6 +317,11 @@ def compute_signals(today_df: pd.DataFrame, bars: dict,
             "vol_today":    today_vol,
             "vol_ratio":    vol_ratio,
             "avg_dvol":     avg_dvol,
+            "stop":         stop,
+            "risk_ps":      risk_ps,
+            "shares":       shares,
+            "pos_size":     pos_size,
+            "pct_port":     pct_port,
         })
 
     # Sort by pct_off_high descending (deepest pullback first)
@@ -326,16 +343,21 @@ def fmt_signals_table(signals: list[dict]) -> str:
     if not signals:
         return "  No signals today.\n"
     lines = []
-    header = (f"  {'Rank':<4}  {'Ticker':<8}  {'Price':>7}  {'%OffHigh':>9}  "
-              f"{'20dHigh':>8}  {'VolRatio':>8}  {'21MA':>7}  {'AvgDVol':>8}")
+    header = (
+        f"  {'Rank':<4}  {'Ticker':<8}  {'Price':>7}  {'%OffHigh':>9}  "
+        f"{'Stop':>7}  {'R$/Shr':>7}  {'Shares':>6}  {'Pos$':>8}  {'%Port':>6}  "
+        f"{'VolRatio':>8}  {'AvgDVol':>8}"
+    )
     sep = "  " + "-" * (len(header) - 2)
     lines.append(header)
     lines.append(sep)
     for rank, s in enumerate(signals, 1):
         lines.append(
             f"  {rank:<4}  {s['ticker']:<8}  ${s['price']:>6.2f}  "
-            f"{-s['pct_off_high']:>+8.1%}  ${s['high_20d']:>7.2f}  "
-            f"{s['vol_ratio']:>6.1f}x  ${s['ma21']:>6.2f}  {dvol_str(s['avg_dvol']):>8}"
+            f"{-s['pct_off_high']:>+8.1%}  "
+            f"${s['stop']:>6.2f}  ${s['risk_ps']:>6.2f}  {s['shares']:>6}  "
+            f"${s['pos_size']:>7,.0f}  {s['pct_port']:>5.1%}  "
+            f"{s['vol_ratio']:>6.1f}x  {dvol_str(s['avg_dvol']):>8}"
         )
     return "\n".join(lines)
 
@@ -358,20 +380,34 @@ def fmt_email_html(signals: list[dict], scan_date: date, next_day: date) -> str:
                 f"<td align='right'>{s['vol_ratio']:.1f}x</td>"
                 f"<td align='right'>${s['ma21']:.2f}</td>"
                 f"<td align='right'>{dvol_str(s['avg_dvol'])}</td>"
+                f"<td align='right' style='color:#7f8c8d'>${s['stop']:.2f}</td>"
+                f"<td align='right'>${s['risk_ps']:.2f}</td>"
+                f"<td align='right'><strong>{s['shares']:,}</strong></td>"
+                f"<td align='right'>${s['pos_size']:,.0f}</td>"
+                f"<td align='right'>{s['pct_port']:.1%}</td>"
                 f"</tr>\n"
             )
         body_content = f"""
         <table border="0" cellpadding="8" cellspacing="0"
                style="border-collapse:collapse;font-family:'Courier New',monospace;
-                      font-size:13px;width:100%;max-width:820px">
+                      font-size:13px;width:100%;max-width:1100px">
           <thead>
             <tr style="background:#1a252f;color:white;text-align:center">
               <th>Rank</th><th>Ticker</th><th>Price</th><th>% Off High</th>
               <th>20d High</th><th>Vol Ratio</th><th>21MA</th><th>Avg $ Vol</th>
+              <th style="background:#2c3e50">Stop</th>
+              <th style="background:#2c3e50">Risk/Shr</th>
+              <th style="background:#2c3e50">Shares</th>
+              <th style="background:#2c3e50">Pos $</th>
+              <th style="background:#2c3e50">% Port</th>
             </tr>
           </thead>
           <tbody>{rows_html}</tbody>
-        </table>"""
+        </table>
+        <p style="margin:6px 0;color:#555;font-size:12px">
+          Position sizing: $60,000 portfolio &bull; 1% risk ($600/trade) &bull;
+          stop = entry &minus; 10% &bull; shares rounded down to whole number
+        </p>"""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -472,6 +508,11 @@ def save_csv(signals: list[dict], scan_date: date) -> Path:
             "vol_today":    int(s["vol_today"]),
             "vol_ratio":    round(s["vol_ratio"], 2),
             "avg_dvol":     int(s["avg_dvol"]),
+            "stop":         s["stop"],
+            "risk_per_share": round(s["risk_ps"], 2),
+            "shares":       s["shares"],
+            "pos_size":     s["pos_size"],
+            "pct_portfolio": round(s["pct_port"] * 100, 1),
         })
     df = pd.DataFrame(rows)
     df.to_csv(out_path, index=False)
