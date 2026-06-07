@@ -1,0 +1,99 @@
+================================================================================
+  Pullback Conditional Exit Study
+  Setup: mid/small | dn8-10% | above 21MA | green candle | max 20d hold
+================================================================================
+
+[1/4] Loading bars ...
+  Loading pkl: 2022-01-01 -> 2025-08-29 ...
+  955 days, 17,125 tickers.
+
+[2/4] Classifying universe ...
+  large=1,537  mid=2,746  small=5,094  other=5,790
+
+[3/4] Scanning for signals (dn8-10%, above-21MA, green, mid+small) ...
+  1,000/7,840 tickers, 2,427 signals ...
+  2,000/7,840 tickers, 5,408 signals ...
+  3,000/7,840 tickers, 7,904 signals ...
+  4,000/7,840 tickers, 11,140 signals ...
+  5,000/7,840 tickers, 12,957 signals ...
+  6,000/7,840 tickers, 13,954 signals ...
+  7,000/7,840 tickers, 14,846 signals ...
+  Done. 14,953 signals.
+  dn8: 14,953  |  dn10: 8,569
+
+[4/4] Simulating all exit strategies ...
+
+Running exits for dn8+above21MA (14,953 signals) ...
+
+==========================================================================================================
+  CONDITIONAL EXIT COMPARISON — dn8+above21MA
+==========================================================================================================
+  Exit Strategy                          n     WR     AvgW     AvgL      Exp  vs Base  Early%  AvgHold
+  --------------------------------------------------------------------------------------------------------
+  Baseline (20d time exit)           14953   52%  +25.5%  -14.3%  +6.51%        —     0%     20.0d
+  SPY drop >3%                       14901   51%  +24.3%  -12.5%  +6.31%   -0.20%    25%     17.6d
+  No gain by day 3                   14953   41%  +27.0%   -8.6%  +6.14%   -0.37%    30%     14.9d
+  No gain by day 5                   14953   41%  +27.2%   -8.8%  +6.08%   -0.43%    35%     14.8d
+  Day3 cutoff OR SPY drop            14913   41%  +25.5%   -7.8%  +6.04%   -0.46%    46%     13.5d
+  Day5 cutoff OR SPY drop            14911   42%  +25.5%   -8.1%  +5.97%   -0.54%    48%     13.6d
+  Break 50MA                         14953   53%  +16.3%   -7.4%  +5.23%   -1.28%    73%      9.7d
+  Day3 cutoff OR 50MA break          14953   50%  +15.8%   -5.6%  +5.11%   -1.40%    77%      8.3d
+==========================================================================================================
+
+  Exit reason breakdown:
+  Strategy                            time    day3    day5    ma50     spy
+  -----------------------------------------------------------------
+  Baseline (20d time exit)            100%       -       -       -       -
+  SPY drop >3%                         75%       -       -       -     25%
+  No gain by day 3                     70%     30%       -       -       -
+  No gain by day 5                     65%       -     35%       -       -
+  Day3 cutoff OR SPY drop              54%     30%       -       -     16%
+  Day5 cutoff OR SPY drop              52%       -     33%       -     15%
+  Break 50MA                           27%       -       -     73%       -
+  Day3 cutoff OR 50MA break            23%     16%       -     62%       -
+
+
+Running exits for dn10+above21MA (8,569 signals) ...
+
+==========================================================================================================
+  CONDITIONAL EXIT COMPARISON — dn10+above21MA
+==========================================================================================================
+  Exit Strategy                          n     WR     AvgW     AvgL      Exp  vs Base  Early%  AvgHold
+  --------------------------------------------------------------------------------------------------------
+  Baseline (20d time exit)            8569   51%  +29.4%  -15.3%  +7.44%        —     0%     20.0d
+  SPY drop >3%                        8534   50%  +27.9%  -13.5%  +7.21%   -0.23%    26%     17.6d
+  No gain by day 3                    8569   41%  +31.4%   -9.4%  +7.15%   -0.29%    30%     14.9d
+  No gain by day 5                    8569   41%  +31.5%   -9.5%  +7.11%   -0.33%    35%     14.7d
+  Day3 cutoff OR SPY drop             8543   41%  +29.4%   -8.5%  +6.97%   -0.47%    46%     13.4d
+  Day5 cutoff OR SPY drop             8542   41%  +29.3%   -8.7%  +6.87%   -0.57%    49%     13.4d
+  Break 50MA                          8569   53%  +18.3%   -8.3%  +5.80%   -1.64%    74%      9.4d
+  Day3 cutoff OR 50MA break           8569   50%  +17.7%   -6.3%  +5.73%   -1.71%    78%      8.1d
+==========================================================================================================
+
+  Exit reason breakdown:
+  Strategy                            time    day3    day5    ma50     spy
+  -----------------------------------------------------------------
+  Baseline (20d time exit)            100%       -       -       -       -
+  SPY drop >3%                         74%       -       -       -     26%
+  No gain by day 3                     70%     30%       -       -       -
+  No gain by day 5                     65%       -     35%       -       -
+  Day3 cutoff OR SPY drop              54%     30%       -       -     16%
+  Day5 cutoff OR SPY drop              51%       -     34%       -     15%
+  Break 50MA                           26%       -       -     74%       -
+  Day3 cutoff OR 50MA break            22%     16%       -     63%       -
+
+
+================================================================================
+  BEST EXIT STRATEGY SUMMARY
+================================================================================
+
+  dn8+above21MA:
+    Best exit  : Baseline (20d time exit)
+    n=14,953  WR=52%  AvgW=+25.5%  AvgL=-14.3%  Exp=+6.51%  vs baseline=+0.00%  Early=0%  AvgHold=20.0d
+
+  dn10+above21MA:
+    Best exit  : Baseline (20d time exit)
+    n=8,569  WR=51%  AvgW=+29.4%  AvgL=-15.3%  Exp=+7.44%  vs baseline=+0.00%  Early=0%  AvgHold=20.0d
+
+  Saved: alt_exits_dn8.csv, alt_exits_dn10.csv
+
