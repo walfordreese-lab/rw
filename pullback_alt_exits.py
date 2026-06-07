@@ -34,6 +34,7 @@ BASE_DIR  = Path(__file__).parent
 CACHE_DIR = BASE_DIR / "poly_cache"
 sys.path.insert(0, str(BASE_DIR))
 from polygon_fetcher import _bdays
+from etf_filter import get_etf_set, is_etf
 
 DATA_START    = date(2022, 1, 1)
 SIM_START     = date(2023, 1, 1)
@@ -433,6 +434,10 @@ def main():
               for k in ("large","mid","small","other")}
     print(f"  large={counts['large']:,}  mid={counts['mid']:,}  "
           f"small={counts['small']:,}  other={counts['other']:,}", flush=True)
+    etf_set = get_etf_set()
+    before = len(umap)
+    umap = {t: u for t, u in umap.items() if not is_etf(t, etf_set)}
+    print(f"  ETF filter: {before - len(umap):,} tickers removed, {len(umap):,} remain.", flush=True)
     print(flush=True)
 
     print("[3/4] Scanning for signals (dn8-10%, above-21MA, green, mid+small) ...", flush=True)

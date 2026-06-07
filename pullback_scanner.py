@@ -51,6 +51,7 @@ RESULTS_DIR.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(BASE_DIR))
 from polygon_fetcher import _bdays, fetch_grouped_day
+from etf_filter import get_etf_set, is_etf
 
 # ── Load .env if present ────────────────────────────────────────────────────────
 _env_path = BASE_DIR / ".env"
@@ -470,6 +471,14 @@ def main():
     if today_df.empty:
         print("  No data available. Exiting.", flush=True)
         return
+
+    # ── ETF exclusion ────────────────────────────────────────────────────────
+    etf_set = get_etf_set()
+    before_etf = len(today_df)
+    today_df = today_df[~today_df["ticker"].apply(lambda t: is_etf(t, etf_set))].copy()
+    etf_removed = before_etf - len(today_df)
+    if etf_removed:
+        print(f"  {etf_removed} ETF/leveraged tickers excluded.", flush=True)
 
     active_tickers = set(today_df["ticker"].tolist())
     print(f"  {len(active_tickers):,} active tickers (green candles) to evaluate.", flush=True)

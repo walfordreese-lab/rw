@@ -42,6 +42,7 @@ FUND_DIR.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(BASE_DIR))
 from polygon_fetcher import _bdays, _get
+from etf_filter import get_etf_set, is_etf
 
 # ── Backtest window ────────────────────────────────────────────────────────────
 DATA_START    = date(2022, 1, 1)
@@ -598,6 +599,11 @@ def main():
     umap, dvol_avg = classify_universe(bars, all_days)
     counts = {k: sum(1 for v in umap.values() if v == k) for k in ("large", "mid", "small", "other")}
     print(f"  large={counts['large']:,}  mid={counts['mid']:,}  small={counts['small']:,}  other={counts['other']:,}", flush=True)
+    etf_set = get_etf_set()
+    before = len(umap)
+    umap = {t: u for t, u in umap.items() if not is_etf(t, etf_set)}
+    dvol_avg = {t: v for t, v in dvol_avg.items() if t in umap}
+    print(f"  ETF filter: {before - len(umap):,} tickers removed, {len(umap):,} remain.", flush=True)
     print(flush=True)
 
     # ── SPY RS reference ─────────────────────────────────────────────────────
