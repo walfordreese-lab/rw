@@ -1,5 +1,8 @@
 __pycache__/
 poly_cache/
+fundamentals_cache/
+.env
+scanner_results/*.log
 frd_alerts_*.txt
 .email_creds.json
 scanner_run_output.txt
