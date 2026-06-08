@@ -1,32 +1,23 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Monthly momentum scanner — runs on the 1st of each month at 4:30 PM ET. If the 1st falls on a weekend, Task Scheduler runs it the next weekday.</Description>
+    <Description>Monthly momentum scanner — runs daily Mon–Fri at 4:30 PM but wrapper script skips unless it is the first business day of the month.</Description>
     <Author>FRD Backtest</Author>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>
       <StartBoundary>2026-01-01T16:30:00</StartBoundary>
       <Enabled>true</Enabled>
-      <ScheduleByMonth>
-        <DaysOfMonth>
-          <Day>1</Day>
-        </DaysOfMonth>
-        <Months>
-          <January />
-          <February />
-          <March />
-          <April />
-          <May />
-          <June />
-          <July />
-          <August />
-          <September />
-          <October />
-          <November />
-          <December />
-        </Months>
-      </ScheduleByMonth>
+      <ScheduleByWeek>
+        <WeeksInterval>1</WeeksInterval>
+        <DaysOfWeek>
+          <Monday />
+          <Tuesday />
+          <Wednesday />
+          <Thursday />
+          <Friday />
+        </DaysOfWeek>
+      </ScheduleByWeek>
     </CalendarTrigger>
   </Triggers>
   <Principals>
@@ -50,8 +41,8 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\reese\AppData\Local\Python\pythoncore-3.14-64\python.exe</Command>
-      <Arguments>momentum_scanner.py</Arguments>
+      <Command>powershell.exe</Command>
+      <Arguments>-ExecutionPolicy Bypass -File "C:\Users\reese\frd_backtest\tasks\run_momentum_scanner.ps1"</Arguments>
       <WorkingDirectory>C:\Users\reese\frd_backtest</WorkingDirectory>
     </Exec>
   </Actions>
