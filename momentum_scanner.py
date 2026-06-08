@@ -15,6 +15,7 @@ Backtest edge (strategy_discovery.py, Jan 2022 – Jun 2026):
 
 Universe:
   - Avg daily dollar volume > $10 M (mid/large cap)
+  - Market cap >= $2B
   - ETFs, leveraged, and inverse products excluded
   - Min 130 bars of history required
 
@@ -66,6 +67,7 @@ RECIPIENT          = "walfordreese@gmail.com"
 
 # ── Strategy parameters ────────────────────────────────────────────────────────
 MIN_DV          = 10_000_000     # $10M avg daily dollar volume
+MIN_MKT_CAP     = 2_000_000_000  # $2B minimum market cap
 MIN_BARS        = 130            # minimum history bars
 LOOKBACK        = 126            # 6-month momentum window
 SKIP            = 5              # skip most recent N days (reversal buffer)
@@ -131,6 +133,38 @@ def load_market_caps() -> dict[str, float]:
         except Exception:
             pass
     return caps
+
+
+def fetch_missing_market_caps(tickers: set, existing: dict) -> dict:
+    """Fetch market caps from Polygon for tickers not already in cache."""
+    import requests, time as _time
+    api_key = os.environ.get("POLYGON_API_KEY", "U8xSGmMGDkx1gyq2i9zH1d48Zd5iW6D1")
+    missing = [t for t in tickers if t not in existing]
+    if not missing:
+        return existing
+    print(f"  Fetching market caps for {len(missing)} uncached tickers ...", flush=True)
+    FUND_DIR.mkdir(exist_ok=True)
+    fetched = 0
+    for tkr in missing:
+        try:
+            r = requests.get(
+                f"https://api.polygon.io/v3/reference/tickers/{tkr}",
+                params={"apiKey": api_key}, timeout=10
+            )
+            res = r.json().get("results", {})
+            mc = res.get("market_cap")
+            if mc and float(mc) > 0:
+                existing[tkr] = float(mc)
+                fetched += 1
+            # cache it so future runs don't re-fetch
+            cache_path = FUND_DIR / f"{tkr}.pkl"
+            if not cache_path.exists():
+                pickle.dump({"market_cap": mc}, open(cache_path, "wb"), protocol=4)
+            _time.sleep(0.05)  # ~20 req/s, well within free tier
+        except Exception:
+            pass
+    print(f"  Fetched {fetched} new market caps.", flush=True)
+    return existing
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -326,7 +360,7 @@ def fmt_html(signals: list[dict], scan_date: date, n_universe: int) -> str:
     <strong>Hold:</strong> 21 trading days (monthly rebalance)
   </p>
   <p style="margin:4px 0;color:#555;font-size:13px">
-    Universe: avg daily $ vol &gt; $10M &bull; not ETF &bull;
+    Universe: avg daily $ vol &gt; $10M &bull; mkt cap &gt;= $2B &bull; not ETF &bull;
     ranked by 126-day return (skipping last 5 days)
   </p>
   <p style="margin:4px 0;color:#27ae60;font-size:13px">
@@ -454,6 +488,11 @@ def main():
     print("  Loading market caps ...", flush=True)
     mkt_caps = load_market_caps()
     print(f"  Market caps available for {len(mkt_caps):,} tickers.", flush=True)
+    mkt_caps = fetch_missing_market_caps(active, mkt_caps)
+    before = len(today_df)
+    today_df = today_df[today_df["ticker"].apply(lambda t: mkt_caps.get(t, 0) >= MIN_MKT_CAP)].copy()
+    print(f"  {len(today_df):,} tickers after $2B+ market cap filter (removed {before - len(today_df):,}).", flush=True)
+    active = set(today_df["ticker"])
     print(flush=True)
 
     # ── Compute momentum signals ──────────────────────────────────────────────
