@@ -2,9 +2,11 @@ __pycache__/
 poly_cache/
 fundamentals_cache/
 .env
-scanner_results/*.log
+*.log
 frd_alerts_*.txt
 .email_creds.json
+scanner_results/momentum/*.csv
+scanner_results/breakout/*.csv
 scanner_run_output.txt
 scanner_run_error.txt
 stdin_blank.txt
