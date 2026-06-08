@@ -11,6 +11,7 @@ Cache: fundamentals_cache/etf_tickers.pkl  (auto-built on first use; delete to r
 
 import pickle, re, time, requests
 from pathlib import Path
+from datetime import datetime, timedelta
 
 BASE_DIR   = Path(__file__).parent
 CACHE_FILE = BASE_DIR / "fundamentals_cache" / "etf_tickers.pkl"
@@ -20,14 +21,23 @@ BASE_URL   = "https://api.polygon.io"
 # Polygon security type codes that are NOT individual stocks
 _ETF_TYPES = ("ETF", "ETV", "ETN", "ETS")
 
-# Ticker-symbol patterns that flag leveraged/inverse products
-_SYMBOL_RE = re.compile(r"(\d+[Xx]|[Xx]\d+|-[123][Xx])", re.IGNORECASE)
+# Ticker-symbol patterns that flag leveraged/inverse or ETF-style products
+_SYMBOL_RE = re.compile(
+    r"(\d+[Xx]|[Xx]\d+|-[123][Xx]|"       # leveraged/inverse: 2X, 3X, -1X …
+    r"[A-Z]{2,4}[DU]$|"                    # directional suffix: SPY→SPYD, TQQQ→TQQQU
+    r"(TQQQ|SQQQ|UPRO|SPXU|LABU|LABD|"    # well-known leveraged ETF tickers
+    r"MSTU|MQQQ|MSTZ|FNGU|FNGS|FNGD|"
+    r"TECL|TECS|DFEN|DPST|GUSH|DRIP)$)",
+    re.IGNORECASE
+)
 
-# Name keywords indicating leveraged/inverse ETFs (used when name is available)
+# Name keywords indicating ETFs or leveraged/inverse products (used when name is available)
 _NAME_KEYWORDS = frozenset([
+    "etf", "etp", "etn", "fund", "trust", "index",
     "ultra", "ultrapro", "short", "bear", "inverse",
     "2x", "3x", "-1x", "-2x", "-3x",
-    "leveraged", "direxion", "proshares",
+    "leveraged", "direxion", "proshares", "ishares",
+    "vanguard", "invesco", "spdr", "wisdomtree",
 ])
 
 
@@ -70,7 +80,11 @@ def get_etf_set(refresh: bool = False) -> frozenset:
     Loads from cache on subsequent calls; fetches from API on first run.
     Pass refresh=True to force a re-fetch from the API.
     """
-    if not refresh and CACHE_FILE.exists():
+    cache_stale = (
+        not CACHE_FILE.exists() or
+        datetime.fromtimestamp(CACHE_FILE.stat().st_mtime) < datetime.now() - timedelta(days=7)
+    )
+    if not refresh and not cache_stale:
         with open(CACHE_FILE, "rb") as f:
             return frozenset(pickle.load(f))
 
