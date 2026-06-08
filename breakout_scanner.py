@@ -14,8 +14,8 @@ Backtest edge (strategy_discovery.py, Jan 2022 – Jun 2026):
   Out-of-sample (H1 2026): Sharpe 6.66  | WR 36.2% | PF 1.49 | Total +353% | MaxDD -13%
   Regime-agnostic: WR holds 36-38% in bear, neutral, and bull markets.
 
-Position sizing:  $60,000 portfolio | 1% risk = $600/trade | 3% stop
-  → shares = $600 / (entry × 0.03)  |  position $ = shares × entry ≈ $20,000/trade
+Position sizing:  $70,000 portfolio | 1% risk = $700/trade | 3% stop
+  → shares = $700 / (entry × 0.03)  |  position $ = shares × entry ≈ $23,333/trade
 
 Universe:
   - Avg daily dollar volume > $10 M (mid/large cap)
@@ -76,9 +76,9 @@ STOP_PCT        = 0.03           # 3% below entry
 HISTORY_CAL_DAYS = 45            # calendar days of history to load
 
 # ── Position sizing ────────────────────────────────────────────────────────────
-PORTFOLIO_SIZE  = 60_000         # $
-RISK_PER_TRADE  = 600            # $ (1% of portfolio)
-MAX_POSITION    = 20_000         # practical cap: ~1/3 portfolio per trade
+PORTFOLIO_SIZE  = 70_000         # $
+RISK_PER_TRADE  = 700            # $ (1% of portfolio)
+MAX_POSITION    = 23_333         # practical cap: ~1/3 portfolio per trade
 
 
 def _bdays_list(ref_date: date, n_cal_days: int) -> list[date]:
@@ -290,7 +290,7 @@ def fmt_html(signals: list[dict], scan_date: date, next_day: date) -> str:
         <p style="margin:6px 0;color:#555;font-size:12px">
           Entry~ = today's close (proxy) &bull; actual entry = {next_day} open &bull;
           * = capped at ${MAX_POSITION:,} &bull;
-          $60K portfolio &bull; 1% risk ($600/trade) &bull; 3% stop
+          $70K portfolio &bull; 1% risk ($700/trade) &bull; 3% stop
         </p>"""
 
     return f"""<!DOCTYPE html>

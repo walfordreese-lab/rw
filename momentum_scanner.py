@@ -76,8 +76,8 @@ DV_PERIOD       = 20             # days for avg dollar-vol calculation
 HISTORY_CAL_DAYS = 220           # calendar days of history to load (covers ~150 bdays)
 
 # ── Position sizing (informational only for momentum) ─────────────────────────
-PORTFOLIO_SIZE  = 60_000
-RISK_PER_TRADE  = 600            # 1% of portfolio
+PORTFOLIO_SIZE  = 70_000
+RISK_PER_TRADE  = 700            # 1% of portfolio
 
 
 def _bdays_list(ref_date: date, n_cal_days: int) -> list[date]:
