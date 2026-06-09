@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Monthly momentum scanner — runs daily Mon–Fri at 4:30 PM but wrapper script skips unless it is the first business day of the month.</Description>
+    <Description>Momentum scanner — runs at logon and again Mon–Fri at 4:30 PM. Wrapper skips unless it is the first business day of the month. Never fires for missed schedules.</Description>
     <Author>FRD Backtest</Author>
   </RegistrationInfo>
   <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
     <CalendarTrigger>
       <StartBoundary>2026-01-01T16:30:00</StartBoundary>
       <Enabled>true</Enabled>
+      <StartWhenAvailable>false</StartWhenAvailable>
       <ScheduleByWeek>
         <WeeksInterval>1</WeeksInterval>
         <DaysOfWeek>
@@ -34,6 +38,7 @@
     <Enabled>true</Enabled>
     <RunOnlyIfIdle>false</RunOnlyIfIdle>
     <WakeToRun>false</WakeToRun>
+    <StartWhenAvailable>false</StartWhenAvailable>
     <IdleSettings>
       <StopOnIdleEnd>false</StopOnIdleEnd>
       <RestartOnIdle>false</RestartOnIdle>
